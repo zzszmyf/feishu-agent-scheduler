@@ -176,6 +176,10 @@ feishu-agent-schedule add daily-health \
 
 正常返回 `[SILENT]` 就不推送；异常才发飞书。任务定义在 `~/.config/feishu-agent/jobs/`，日志在 `~/.local/state/feishu-agent/jobs/`。
 
+## Related
+
+Part of [feishu-agent-stack](https://github.com/zzszmyf/feishu-agent-stack) — tools for running coding agents from Feishu/Lark. See also [`cc-session`](https://github.com/zzszmyf/cc-session) for persistent interactive sessions and [`pi-managed-agents`](https://github.com/zzszmyf/pi-managed-agents) for managed sessions and sandboxes.
+
 ## License
 
 MIT
