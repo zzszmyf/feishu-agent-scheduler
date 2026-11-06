@@ -1,0 +1,17 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  shell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bash syntax
+        run: |
+          bash -n bin/feishu-agent-schedule
+          bash -n bin/feishu-agent-run-job
+      - name: Help
+        run: ./bin/feishu-agent-schedule help >/dev/null
