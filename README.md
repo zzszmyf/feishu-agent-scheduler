@@ -1,5 +1,10 @@
 # feishu-agent-scheduler
 
+[![CI](https://github.com/zzszmyf/feishu-agent-scheduler/actions/workflows/ci.yml/badge.svg)](https://github.com/zzszmyf/feishu-agent-scheduler/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/zzszmyf/feishu-agent-scheduler?display_name=tag)](https://github.com/zzszmyf/feishu-agent-scheduler/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![systemd](https://img.shields.io/badge/systemd-user%20timer-2b2b2b)](https://www.freedesktop.org/software/systemd/man/systemd.timer.html)
+
 Schedule non-interactive Claude Code jobs with systemd user timers and push the result to Feishu/Lark with `lark-cli`.
 
 This is the "cron for coding agents" pattern:
@@ -24,6 +29,12 @@ It is intentionally small: no server, no database, no daemon. Job definitions ar
 - `flock` prevents overlapping runs
 - Idempotency key on the Feishu message
 - Log retention
+
+## Demo
+
+![feishu-agent-scheduler demo](docs/demo.gif)
+
+Animated terminal rendering of the basic flow: add a job, list jobs and the next timer, then read the last run log. Static frame: [`docs/demo.png`](docs/demo.png).
 
 ## Requirements
 
