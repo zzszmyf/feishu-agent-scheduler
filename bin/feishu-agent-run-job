@@ -1,0 +1,150 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+JOB="${1:-}"
+if [[ -z "$JOB" ]]; then
+  echo "usage: feishu-agent-run-job <job-name>" >&2
+  exit 2
+fi
+
+JOBS_DIR="${FEISHU_AGENT_JOBS_DIR:-$HOME/.config/feishu-agent/jobs}"
+JOB_FILE="$JOBS_DIR/$JOB.env"
+if [[ ! -f "$JOB_FILE" ]]; then
+  echo "job not found: $JOB_FILE" >&2
+  exit 2
+fi
+# shellcheck disable=SC1090
+source "$JOB_FILE"
+
+WORKSPACE="${WORKSPACE:-$HOME/agent-workspace}"
+TARGET_TYPE="${TARGET_TYPE:-user}"
+TARGET_ID="${TARGET_ID:-}"
+TIMEOUT="${TIMEOUT:-15m}"
+PUSH_ON="${PUSH_ON:-always}"
+MAX_CHARS="${MAX_CHARS:-3500}"
+ALLOWED_TOOLS="${ALLOWED_TOOLS:-Read Grep Glob}"
+SILENT_MARKER="${SILENT_MARKER:-[SILENT]}"
+LOG_KEEP_DAYS="${LOG_KEEP_DAYS:-14}"
+
+if [[ -z "$TARGET_ID" ]]; then
+  echo "TARGET_ID is required in $JOB_FILE" >&2
+  exit 2
+fi
+
+# Optional agent credentials + PATH (ANTHROPIC_* / CLAUDE_CODE_*).
+# Keep this file outside the repository and chmod 600.
+AGENT_ENV_FILE="${FEISHU_AGENT_ENV_FILE:-$HOME/.config/feishu-agent/agent.env}"
+if [[ -f "$AGENT_ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$AGENT_ENV_FILE"
+  set +a
+fi
+
+# lark-cli bridge-bound environment
+export LARK_CHANNEL=1
+export LARK_CHANNEL_HOME="$HOME/.lark-channel"
+export LARK_CHANNEL_PROFILE="${LARK_CHANNEL_PROFILE:-claude}"
+export LARK_CHANNEL_CONFIG="$HOME/.lark-channel/profiles/$LARK_CHANNEL_PROFILE/lark-cli-source/config.json"
+export LARKSUITE_CLI_CONFIG_DIR="$HOME/.lark-channel/profiles/$LARK_CHANNEL_PROFILE/lark-cli"
+
+CLAUDE_BIN="${CLAUDE_BIN:-$(command -v claude || true)}"
+LARK_CLI_BIN="${LARK_CLI_BIN:-$(command -v lark-cli || true)}"
+if [[ -z "$CLAUDE_BIN" || -z "$LARK_CLI_BIN" ]]; then
+  echo "claude or lark-cli not found in PATH" >&2
+  exit 2
+fi
+
+if [[ -n "${PROMPT_FILE:-}" ]]; then
+  PROMPT="$(cat "$PROMPT_FILE")"
+elif [[ -n "${PROMPT:-}" ]]; then
+  PROMPT="$PROMPT"
+else
+  echo "PROMPT or PROMPT_FILE is required in $JOB_FILE" >&2
+  exit 2
+fi
+
+STATE_DIR="${FEISHU_AGENT_STATE_DIR:-$HOME/.local/state/feishu-agent/jobs}/$JOB"
+mkdir -p "$STATE_DIR"
+exec 9>"$STATE_DIR/.lock"
+if ! flock -n 9; then
+  echo "job already running: $JOB" >&2
+  exit 0
+fi
+
+TS="$(date +%Y%m%d-%H%M%S)"
+LOG_FILE="$STATE_DIR/$TS.log"
+START="$(date +%s)"
+
+cd "$WORKSPACE"
+if [[ "$ALLOWED_TOOLS" == "bypass" ]]; then
+  PERM_ARGS=(--permission-mode bypassPermissions)
+else
+  PERM_ARGS=(--allowedTools "$ALLOWED_TOOLS")
+fi
+
+set +e
+timeout "$TIMEOUT" "$CLAUDE_BIN" -p "$PROMPT" \
+  --output-format text "${PERM_ARGS[@]}" >"$LOG_FILE" 2>&1
+RC=$?
+set -e
+
+END="$(date +%s)"
+DURATION=$((END - START))
+OUTPUT="$(cat "$LOG_FILE")"
+OUTPUT="$(printf '%s' "$OUTPUT" \
+  | sed -r 's/\x1B\[[0-9;]*[mK]//g' \
+  | grep -v '^\[claude-code:unrecognized_model\]' || true)"
+
+trim_output() {
+  local s="$1"
+  if (( ${#s} > MAX_CHARS )); then
+    printf '%s\n\n…（已截断，完整日志：%s）' "${s:0:MAX_CHARS}" "$LOG_FILE"
+  else
+    printf '%s' "$s"
+  fi
+}
+
+SHOULD_PUSH=0
+case "$PUSH_ON" in
+  always) SHOULD_PUSH=1 ;;
+  failure) (( RC != 0 )) && SHOULD_PUSH=1 ;;
+  nonempty) [[ -n "${OUTPUT//[[:space:]]/}" ]] && SHOULD_PUSH=1 ;;
+  *) echo "invalid PUSH_ON: $PUSH_ON" >&2 ;;
+esac
+
+if [[ -n "$SILENT_MARKER" && "$OUTPUT" == *"$SILENT_MARKER"* ]]; then
+  SHOULD_PUSH=0
+fi
+
+if (( SHOULD_PUSH )); then
+  if (( RC == 0 )); then
+    HEADER="✅ 定时任务 $JOB 完成（${DURATION}s）"
+  else
+    HEADER="❌ 定时任务 $JOB 失败（exit $RC，${DURATION}s）"
+  fi
+  if [[ -z "${OUTPUT//[[:space:]]/}" ]]; then
+    BODY="（无输出）"
+  else
+    BODY="$(trim_output "$OUTPUT")"
+  fi
+  MSG="$HEADER
+$BODY"
+
+  ARGS=(im +messages-send)
+  if [[ "$TARGET_TYPE" == "chat" ]]; then
+    ARGS+=(--chat-id "$TARGET_ID")
+  else
+    ARGS+=(--user-id "$TARGET_ID")
+  fi
+  ARGS+=(--text "$MSG" --idempotency-key "${JOB:0:20}-$TS")
+
+  if ! "$LARK_CLI_BIN" "${ARGS[@]}" >>"$LOG_FILE" 2>&1; then
+    echo "failed to push result to Feishu (see $LOG_FILE)" >&2
+  fi
+fi
+
+find "$STATE_DIR" -maxdepth 1 -name '*.log' -mtime +"$LOG_KEEP_DAYS" -delete 2>/dev/null || true
+
+echo "[$JOB] exit=$RC duration=${DURATION}s log=$LOG_FILE"
+exit "$RC"
