@@ -43,7 +43,7 @@ fi
 
 # lark-cli bridge-bound environment
 export LARK_CHANNEL=1
-export LARK_CHANNEL_HOME="$HOME/.lark-channel"
+export LARK_CHANNEL_HOME="${LARK_CHANNEL_HOME:-$HOME/.lark-channel}"
 export LARK_CHANNEL_PROFILE="${LARK_CHANNEL_PROFILE:-claude}"
 export LARK_CHANNEL_CONFIG="$HOME/.lark-channel/profiles/$LARK_CHANNEL_PROFILE/lark-cli-source/config.json"
 export LARKSUITE_CLI_CONFIG_DIR="$HOME/.lark-channel/profiles/$LARK_CHANNEL_PROFILE/lark-cli"
